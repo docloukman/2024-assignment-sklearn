@@ -80,6 +80,14 @@ class KNearestNeighbors(BaseEstimator, ClassifierMixin):
     """
 
     def __init__(self, n_neighbors=1):
+        """
+        Initialize the KNearestNeighbors classifier.
+
+        Parameters
+        ----------
+        n_neighbors : int, default=1
+            Number of neighbors to use for predictions.
+        """
         self.n_neighbors = n_neighbors
 
     def fit(self, X, y):
@@ -202,6 +210,15 @@ class MonthlySplit(BaseCrossValidator):
     """
 
     def __init__(self, time_col='index'):
+        """
+        Initialize the MonthlySplit cross-validator.
+
+        Parameters
+        ----------
+        time_col : str, default='index'
+            Column to use for date-based splitting. If 'index', the index of the
+            DataFrame is used as the date column.
+        """
         self.time_col = time_col
 
     def get_n_splits(self, X, y=None, groups=None):
