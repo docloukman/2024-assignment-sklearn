@@ -53,22 +53,21 @@ import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.metrics.pairwise import pairwise_distances
-from sklearn.utils.validation import check_X_y, check_array, check_is_fitted
+from sklearn.utils.validation import (
+    check_X_y, check_array, check_is_fitted, check_consistent_length
+)
 from sklearn.utils.multiclass import check_classification_targets
 from sklearn.preprocessing import LabelEncoder
 from sklearn.model_selection import BaseCrossValidator
 
 
 class KNearestNeighbors(BaseEstimator, ClassifierMixin):
-    """Classifier implementing the k-nearest neighbors algorithm.
-
-    This classifier predicts the target of a test point based on the target
-    of its nearest neighbor in the training set, using Euclidean distance.
+    """K-nearest neighbors classifier implementation.
 
     Parameters
     ----------
     n_neighbors : int, default=1
-        Number of neighbors to consider for prediction.
+        Number of neighbors to use for classification.
 
     Attributes
     ----------
@@ -78,20 +77,22 @@ class KNearestNeighbors(BaseEstimator, ClassifierMixin):
         The target values.
     classes_ : ndarray of shape (n_classes,)
         The unique classes labels.
+    n_features_in_ : int
+        Number of features seen during fit.
     """
 
     def __init__(self, n_neighbors=1):
-        """Initialize the KNearestNeighbors classifier.
+        """Initialize the classifier.
 
         Parameters
         ----------
         n_neighbors : int, default=1
-            Number of neighbors to use for prediction.
+            Number of neighbors to use.
         """
         self.n_neighbors = n_neighbors
 
     def fit(self, X, y):
-        """Fit the k-nearest neighbors classifier.
+        """Fit the model using X as training data and y as target values.
 
         Parameters
         ----------
@@ -105,60 +106,53 @@ class KNearestNeighbors(BaseEstimator, ClassifierMixin):
         self : object
             Returns the instance itself.
         """
-        # Input validation using sklearn's check functions
-        X, y = check_X_y(X, y)
+        X, y = check_X_y(X, y, ensure_2d=True, allow_nd=False)
         check_classification_targets(y)
 
-        # Store number of features for predict step validation
+        if self.n_neighbors < 1:
+            raise ValueError(
+                f"Expected n_neighbors > 0, got {self.n_neighbors}"
+            )
+
         self.n_features_in_ = X.shape[1]
-
-        # Encode class labels
         self.le_ = LabelEncoder()
-        y = self.le_.fit_transform(y)
-
-        self.X_ = X
-        self.y_ = y
+        self.y_ = self.le_.fit_transform(y)
         self.classes_ = self.le_.classes_
+        self.X_ = X
 
         return self
 
     def predict(self, X):
-        """Predict class labels for samples in X.
+        """Predict the class labels for the provided data.
 
         Parameters
         ----------
         X : array-like of shape (n_samples, n_features)
-            The data to predict.
+            Test samples.
 
         Returns
         -------
         y_pred : ndarray of shape (n_samples,)
-            The predicted class labels.
+            Class labels for each data sample.
         """
-        check_is_fitted(self)
-        X = check_array(X)
+        check_is_fitted(self, ['X_', 'y_', 'classes_'])
+        X = check_array(X, ensure_2d=True, allow_nd=False)
 
         if X.shape[1] != self.n_features_in_:
             raise ValueError(
-                f"X has {X.shape[1]} features, but KNearestNeighbors "
-                f"was trained with {self.n_features_in_} features."
+                f"X has {X.shape[1]} features, expected {self.n_features_in_}"
             )
 
-        # Compute distances between test points and training points
         distances = pairwise_distances(X, self.X_)
+        neigh_ind = np.argpartition(
+            distances, min(self.n_neighbors - 1, len(self.y_) - 1), axis=1
+        )[:, :self.n_neighbors]
 
-        # Find indices of k nearest neighbors
-        k_neighbors = np.argsort(distances, axis=1)[:, :self.n_neighbors]
-
-        # Get labels of k nearest neighbors
-        k_neighbors_labels = self.y_[k_neighbors]
-
-        # Predict by majority voting
-        y_pred = np.apply_along_axis(
-            lambda x: np.bincount(x).argmax(),
-            axis=1,
-            arr=k_neighbors_labels
-        )
+        neigh_labels = self.y_[neigh_ind]
+        y_pred = np.array([
+            np.bincount(labels).argmax()
+            for labels in neigh_labels
+        ])
 
         return self.le_.inverse_transform(y_pred)
 
@@ -175,36 +169,24 @@ class KNearestNeighbors(BaseEstimator, ClassifierMixin):
         Returns
         -------
         score : float
-            Mean accuracy of predictions.
+            Mean accuracy of self.predict(X) with respect to y.
         """
+        X = check_array(X, ensure_2d=True, allow_nd=False)
+        check_consistent_length(X, y)
         return np.mean(self.predict(X) == y)
 
 
 class MonthlySplit(BaseCrossValidator):
     """Monthly cross-validation splitter.
 
-    Provides train/test indices to split time series data between successive
-    months. For each split, test indices must be higher than before, and thus
-    shuffling in cross validator is inappropriate.
-
     Parameters
     ----------
     time_col : str, default='index'
-        Column name containing datetime values. If 'index', the index is used.
-
-    Examples
-    --------
-    >>> import pandas as pd
-    >>> dates = pd.date_range('2020-01-01', '2020-03-31', freq='D')
-    >>> X = pd.DataFrame({'val': range(len(dates))}, index=dates)
-    >>> cv = MonthlySplit()
-    >>> for train_idx, test_idx in cv.split(X):
-    ...     print(f"TRAIN:", X.index[train_idx].min(), X.index[train_idx].max())
-    ...     print(f"TEST:", X.index[test_idx].min(), X.index[test_idx].max())
+        Column name containing datetime values. If 'index', uses the index.
     """
 
     def __init__(self, time_col='index'):
-        """Initialize the monthly splitter.
+        """Initialize the splitter.
 
         Parameters
         ----------
@@ -218,7 +200,7 @@ class MonthlySplit(BaseCrossValidator):
 
         Parameters
         ----------
-        X : pd.DataFrame
+        X : pd.DataFrame, required
             Training data.
         y : array-like, default=None
             Always ignored, exists for compatibility.
@@ -231,8 +213,8 @@ class MonthlySplit(BaseCrossValidator):
             Returns the number of splitting iterations.
         """
         time_data = self._get_time_data(X)
-        unique_months = time_data.dt.to_period('M').unique()
-        return max(len(unique_months) - 1, 0)
+        n_months = time_data.dt.to_period('M').nunique()
+        return max(0, n_months - 1)
 
     def split(self, X, y=None, groups=None):
         """Generate indices to split data into training and test set.
@@ -258,12 +240,12 @@ class MonthlySplit(BaseCrossValidator):
         unique_months = sorted(months.unique())
 
         for i in range(len(unique_months) - 1):
-            train_mask = months == unique_months[i]
-            test_mask = months == unique_months[i + 1]
-            yield np.where(train_mask)[0], np.where(test_mask)[0]
+            train_idx = np.where(months == unique_months[i])[0]
+            test_idx = np.where(months == unique_months[i + 1])[0]
+            yield train_idx, test_idx
 
     def _get_time_data(self, X):
-        """Extract datetime data from DataFrame.
+        """Get datetime data from DataFrame.
 
         Parameters
         ----------
@@ -274,11 +256,6 @@ class MonthlySplit(BaseCrossValidator):
         -------
         pd.Series
             Series containing datetime values.
-
-        Raises
-        ------
-        ValueError
-            If datetime column is not found or is invalid.
         """
         if self.time_col == 'index':
             if not isinstance(X.index, pd.DatetimeIndex):
