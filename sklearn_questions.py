@@ -56,6 +56,7 @@ from sklearn.model_selection import BaseCrossValidator
 from sklearn.metrics.pairwise import pairwise_distances
 from sklearn.utils.validation import validate_data, check_is_fitted
 from sklearn.utils.multiclass import check_classification_targets
+from sklearn.preprocessing import LabelEncoder
 
 
 class KNearestNeighbors(BaseEstimator, ClassifierMixin):
@@ -73,7 +74,13 @@ class KNearestNeighbors(BaseEstimator, ClassifierMixin):
         Training data stored during fit.
 
     y_ : ndarray of shape (n_samples,)
-        Labels stored during fit.
+        Encoded labels stored during fit.
+
+    le_ : LabelEncoder
+        Label encoder fitted on y.
+
+    classes_ : ndarray of shape (n_classes,)
+        Unique class labels.
 
     n_features_in_ : int
         Number of features in the training data.
@@ -107,19 +114,28 @@ class KNearestNeighbors(BaseEstimator, ClassifierMixin):
         self : object
             Returns the instance itself.
         """
-        # Validate input data and ensure it's 2D
+        # Validate input data and ensure X is 2D and y is 1D
         X, y = validate_data(
             X, y,
             accept_sparse=False,
             dtype=None,
             ensure_2d=True,
+            y_numeric=False,
+            multi_output=False,
             reset=True
         )
+
         # Validate that y contains classification targets
         check_classification_targets(y)
 
+        # Encode y to ensure it contains non-negative integers starting from 0
+        self.le_ = LabelEncoder()
+        y_encoded = self.le_.fit_transform(y)
+
         self.X_ = X
-        self.y_ = y
+        self.y_ = y_encoded
+        self.classes_ = self.le_.classes_
+
         return self
 
     def predict(self, X):
@@ -137,7 +153,7 @@ class KNearestNeighbors(BaseEstimator, ClassifierMixin):
             Predicted class labels.
         """
         # Check if the classifier has been fitted
-        check_is_fitted(self, ["X_", "y_"])
+        check_is_fitted(self, ["X_", "y_", "le_"])
 
         # Validate input data and ensure it's 2D
         X = validate_data(
@@ -158,10 +174,13 @@ class KNearestNeighbors(BaseEstimator, ClassifierMixin):
         neighbor_labels = self.y_[neighbors_idx]
 
         # Predict by majority vote
-        y_pred = np.array([
-            np.bincount(row.astype(int)).argmax() if len(np.unique(row)) > 0 else 0
+        y_pred_encoded = np.array([
+            np.bincount(row).argmax() if len(np.unique(row)) > 0 else 0
             for row in neighbor_labels
         ])
+
+        # Decode the encoded labels back to original labels
+        y_pred = self.le_.inverse_transform(y_pred_encoded)
 
         return y_pred
 
