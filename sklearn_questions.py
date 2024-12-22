@@ -54,7 +54,8 @@ import pandas as pd
 from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.metrics.pairwise import pairwise_distances
 from sklearn.utils.validation import (
-    check_X_y, check_array, check_is_fitted, check_consistent_length
+    check_X_y, check_array, check_is_fitted, _check_sample_weight,
+    _num_samples
 )
 from sklearn.utils.multiclass import check_classification_targets
 from sklearn.preprocessing import LabelEncoder
@@ -79,6 +80,10 @@ class KNearestNeighbors(BaseEstimator, ClassifierMixin):
         The unique classes labels.
     n_features_in_ : int
         Number of features seen during fit.
+    _fit_X : ndarray of shape (n_samples, n_features)
+        Validated training data.
+    _y : ndarray of shape (n_samples,)
+        Validated target values.
     """
 
     def __init__(self, n_neighbors=1):
@@ -96,29 +101,54 @@ class KNearestNeighbors(BaseEstimator, ClassifierMixin):
 
         Parameters
         ----------
-        X : array-like of shape (n_samples, n_features)
+        X : {array-like, sparse matrix} of shape (n_samples, n_features)
             Training data.
         y : array-like of shape (n_samples,)
             Target values.
 
         Returns
         -------
-        self : object
-            Returns the instance itself.
+        self : KNearestNeighbors
+            The fitted classifier.
         """
-        X, y = check_X_y(X, y, ensure_2d=True, allow_nd=False)
-        check_classification_targets(y)
+        # Input validation
+        X, y = check_X_y(
+            X, y,
+            ensure_2d=True,
+            allow_nd=False,
+            dtype=[np.float64, np.float32],
+            force_all_finite=True
+        )
 
+        # Check that X and y have correct shape
+        if X.shape[0] != y.shape[0]:
+            raise ValueError(
+                f"Found input variables with inconsistent numbers of samples: "
+                f"{[X.shape[0], y.shape[0]]}"
+            )
+
+        # Validate n_neighbors
         if self.n_neighbors < 1:
             raise ValueError(
                 f"Expected n_neighbors > 0, got {self.n_neighbors}"
             )
+        n_samples = _num_samples(X)
+        if self.n_neighbors > n_samples:
+            raise ValueError(
+                f"Expected n_neighbors <= n_samples, got n_neighbors = "
+                f"{self.n_neighbors}, n_samples = {n_samples}"
+            )
 
-        self.n_features_in_ = X.shape[1]
-        self.le_ = LabelEncoder()
-        self.y_ = self.le_.fit_transform(y)
-        self.classes_ = self.le_.classes_
+        check_classification_targets(y)
+
+        self._fit_X = X
         self.X_ = X
+        self.n_features_in_ = X.shape[1]
+
+        # Encode labels
+        self._le = LabelEncoder()
+        self._y = self._le.fit_transform(y)
+        self.classes_ = self._le.classes_
 
         return self
 
@@ -134,27 +164,53 @@ class KNearestNeighbors(BaseEstimator, ClassifierMixin):
         -------
         y_pred : ndarray of shape (n_samples,)
             Class labels for each data sample.
-        """
-        check_is_fitted(self, ['X_', 'y_', 'classes_'])
-        X = check_array(X, ensure_2d=True, allow_nd=False)
 
+        Raises
+        ------
+        ValueError
+            If the number of features in X doesn't match the training data.
+        """
+        # Check if fit has been called
+        check_is_fitted(
+            self,
+            ["_fit_X", "_y", "n_features_in_", "classes_"]
+        )
+
+        # Input validation
+        X = check_array(
+            X,
+            accept_sparse=False,
+            dtype=np.float64,
+            order="C",
+            ensure_2d=True,
+            force_all_finite=True
+        )
+
+        # Check feature size consistency
         if X.shape[1] != self.n_features_in_:
             raise ValueError(
-                f"X has {X.shape[1]} features, expected {self.n_features_in_}"
+                f"X has {X.shape[1]} features, but this "
+                f"KNearestNeighbors is expecting {self.n_features_in_} features"
             )
 
-        distances = pairwise_distances(X, self.X_)
+        # Compute distances and find nearest neighbors
+        distances = pairwise_distances(X, self._fit_X)
         neigh_ind = np.argpartition(
-            distances, min(self.n_neighbors - 1, len(self.y_) - 1), axis=1
+            distances,
+            min(self.n_neighbors - 1, len(self._y) - 1),
+            axis=1
         )[:, :self.n_neighbors]
 
-        neigh_labels = self.y_[neigh_ind]
-        y_pred = np.array([
-            np.bincount(labels).argmax()
-            for labels in neigh_labels
-        ])
+        # Get labels of nearest neighbors
+        neigh_labels = self._y[neigh_ind]
 
-        return self.le_.inverse_transform(y_pred)
+        # Predict by majority voting
+        y_pred = np.zeros(X.shape[0], dtype=self._y.dtype)
+        for i in range(X.shape[0]):
+            counts = np.bincount(neigh_labels[i])
+            y_pred[i] = counts.argmax()
+
+        return self._le.inverse_transform(y_pred)
 
     def score(self, X, y):
         """Return the mean accuracy on the given test data and labels.
@@ -171,8 +227,16 @@ class KNearestNeighbors(BaseEstimator, ClassifierMixin):
         score : float
             Mean accuracy of self.predict(X) with respect to y.
         """
-        X = check_array(X, ensure_2d=True, allow_nd=False)
-        check_consistent_length(X, y)
+        # Check that X and y have correct shape
+        X = check_array(X, accept_sparse=False, ensure_2d=True)
+        y = check_array(y, ensure_2d=False, ensure_min_samples=0)
+
+        if X.shape[0] != y.shape[0]:
+            raise ValueError(
+                f"Found input variables with inconsistent numbers of samples: "
+                f"{[X.shape[0], y.shape[0]]}"
+            )
+
         return np.mean(self.predict(X) == y)
 
 
