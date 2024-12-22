@@ -49,23 +49,64 @@ to compute distances between 2 sets of samples.
 """
 
 
+"""Implementation of KNN classifier and monthly split cross-validator."""
+
+
 import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator, ClassifierMixin
-from sklearn.metrics.pairwise import pairwise_distances
-from sklearn.utils.validation import check_X_y, check_array, check_is_fitted
 from sklearn.model_selection import BaseCrossValidator
+from sklearn.utils.validation import (
+    check_X_y,
+    check_array,
+    check_is_fitted
+)
 
 
 class KNearestNeighbors(BaseEstimator, ClassifierMixin):
+    """K-nearest neighbors classifier.
+
+    Parameters
+    ----------
+    n_neighbors : int, default=1
+        Number of neighbors to use for classification.
+
+    Attributes
+    ----------
+    X_ : ndarray of shape (n_samples, n_features)
+        Training data.
+    y_ : ndarray of shape (n_samples,)
+        Target values.
+    classes_ : ndarray
+        Unique classes in the training data.
+    n_features_in_ : int
+        Number of features seen during fit.
+    """
+
     def __init__(self, n_neighbors=1):
+        """Initialize the classifier."""
         self.n_neighbors = n_neighbors
 
     def fit(self, X, y):
-        # Validation stricte des entrées
-        X, y = check_X_y(X, y, ensure_min_samples=2)
-        self._validate_params()
+        """Fit the model using X as training data and y as target values.
+
+        Parameters
+        ----------
+        X : array-like of shape (n_samples, n_features)
+            Training data.
+        y : array-like of shape (n_samples,)
+            Target values.
+
+        Returns
+        -------
+        self : object
+            Returns self.
+        """
+        X, y = check_X_y(X, y)
         
+        if self.n_neighbors < 1:
+            raise ValueError(f"n_neighbors must be >= 1. Got {self.n_neighbors}")
+            
         self.X_ = X
         self.y_ = y
         self.classes_ = np.unique(y)
@@ -73,30 +114,71 @@ class KNearestNeighbors(BaseEstimator, ClassifierMixin):
         
         return self
 
-    def _validate_params(self):
-        if not isinstance(self.n_neighbors, int) or self.n_neighbors < 1:
-            raise ValueError("n_neighbors must be a positive integer")
-
     def predict(self, X):
+        """Predict the class labels for the provided data.
+
+        Parameters
+        ----------
+        X : array-like of shape (n_samples, n_features)
+            Test samples.
+
+        Returns
+        -------
+        y_pred : ndarray of shape (n_samples,)
+            Class labels for each data sample.
+        """
         check_is_fitted(self)
-        X = check_array(X, ensure_2d=True)
+        X = check_array(X)
         
         if X.shape[1] != self.n_features_in_:
-            raise ValueError(f"X has {X.shape[1]} features, expected {self.n_features_in_}")
+            raise ValueError(
+                f"X has {X.shape[1]} features, but KNearestNeighbors "
+                f"is expecting {self.n_features_in_} features"
+            )
+            
+        distances = ((X[:, np.newaxis, :] - self.X_) ** 2).sum(axis=2)
+        indices = np.argpartition(distances, self.n_neighbors-1)[:, :self.n_neighbors]
         
-        distances = pairwise_distances(X, self.X_)
-        neigh_idx = np.argpartition(distances, self.n_neighbors-1, axis=1)[:, :self.n_neighbors]
-        
-        return np.array([
+        predictions = np.array([
             np.bincount(self.y_[idx]).argmax()
-            for idx in neigh_idx
+            for idx in indices
         ])
+        
+        return predictions
+
 
 class MonthlySplit(BaseCrossValidator):
+    """Monthly cross-validation splitter.
+
+    Parameters
+    ----------
+    time_col : str, default='index'
+        Column name containing datetime values.
+    """
+
     def __init__(self, time_col='index'):
+        """Initialize the splitter."""
         self.time_col = time_col
 
     def split(self, X, y=None, groups=None):
+        """Generate indices to split data into training and validation set.
+
+        Parameters
+        ----------
+        X : array-like of shape (n_samples, n_features)
+            Training data.
+        y : array-like of shape (n_samples,)
+            Always ignored, exists for compatibility.
+        groups : array-like
+            Always ignored, exists for compatibility.
+
+        Yields
+        ------
+        train : ndarray
+            Training set indices.
+        test : ndarray
+            Test set indices.
+        """
         time_data = self._get_time_data(X)
         months = time_data.dt.to_period('M')
         unique_months = sorted(months.unique())
@@ -107,22 +189,55 @@ class MonthlySplit(BaseCrossValidator):
             yield np.where(train_mask)[0], np.where(test_mask)[0]
 
     def get_n_splits(self, X=None, y=None, groups=None):
+        """Returns the number of splitting iterations.
+
+        Parameters
+        ----------
+        X : array-like of shape (n_samples, n_features)
+            Training data.
+        y : array-like of shape (n_samples,)
+            Always ignored, exists for compatibility.
+        groups : array-like
+            Always ignored, exists for compatibility.
+
+        Returns
+        -------
+        n_splits : int
+            Returns the number of splitting iterations.
+        """
         if X is None:
             raise ValueError("X cannot be None")
         time_data = self._get_time_data(X)
         return time_data.dt.to_period('M').nunique() - 1
 
     def _get_time_data(self, X):
+        """Extract datetime data from DataFrame.
+
+        Parameters
+        ----------
+        X : DataFrame
+            Input data.
+
+        Returns
+        -------
+        pd.Series
+            Series containing datetime values.
+
+        Raises
+        ------
+        ValueError
+            If time column is not found or not datetime type.
+        """
         if self.time_col == 'index':
             if not isinstance(X.index, pd.DatetimeIndex):
                 raise ValueError("Index must be DatetimeIndex when time_col='index'")
             return pd.Series(X.index)
-        
+            
         if self.time_col not in X.columns:
             raise ValueError(f"Column {self.time_col} not found")
-        
+            
         time_values = X[self.time_col]
         if not pd.api.types.is_datetime64_any_dtype(time_values):
             raise ValueError(f"Column {self.time_col} must be datetime type")
-        
+            
         return time_values
