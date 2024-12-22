@@ -47,14 +47,15 @@ from sklearn.metrics.pairwise import pairwise_distances
 
 to compute distances between 2 sets of samples.
 """
+
+
 import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator, ClassifierMixin
+from sklearn.model_selection import BaseCrossValidator
 from sklearn.metrics.pairwise import pairwise_distances
 from sklearn.utils.validation import validate_data, check_is_fitted
 from sklearn.utils.multiclass import check_classification_targets
-from sklearn.model_selection import BaseCrossValidator
-from sklearn.utils.validation import check_is_fitted
 
 
 class KNearestNeighbors(BaseEstimator, ClassifierMixin):
