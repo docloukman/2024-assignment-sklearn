@@ -106,7 +106,7 @@ class KNearestNeighbors(BaseEstimator, ClassifierMixin):
         self : object
             Returns the instance itself.
         """
-        # Validate input and set n_features_in_
+        # Validate input data and ensure it's 2D
         X, y = validate_data(
             X, y,
             accept_sparse=False,
@@ -114,6 +114,7 @@ class KNearestNeighbors(BaseEstimator, ClassifierMixin):
             ensure_2d=True,
             reset=True
         )
+        # Validate that y contains classification targets
         check_classification_targets(y)
 
         self.X_ = X
@@ -137,7 +138,7 @@ class KNearestNeighbors(BaseEstimator, ClassifierMixin):
         # Check if the classifier has been fitted
         check_is_fitted(self, ["X_", "y_"])
 
-        # Validate input, reset=False to keep n_features_in_
+        # Validate input data and ensure it's 2D
         X = validate_data(
             X,
             accept_sparse=False,
@@ -146,10 +147,10 @@ class KNearestNeighbors(BaseEstimator, ClassifierMixin):
             reset=False
         )
 
-        # Compute distances
+        # Compute pairwise distances between X and the training data
         distances = pairwise_distances(X, self.X_, metric='euclidean')
 
-        # Find the indices of the k nearest neighbors
+        # Find the indices of the k nearest neighbors for each sample
         neighbors_idx = np.argsort(distances, axis=1)[:, :self.n_neighbors]
 
         # Gather the neighbor labels
