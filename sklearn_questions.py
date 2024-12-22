@@ -52,11 +52,13 @@ to compute distances between 2 sets of samples.
 import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator, ClassifierMixin
-from sklearn.model_selection import BaseCrossValidator
 from sklearn.metrics.pairwise import pairwise_distances
 from sklearn.utils.validation import validate_data, check_is_fitted
 from sklearn.utils.multiclass import check_classification_targets
 from sklearn.preprocessing import LabelEncoder
+from sklearn.model_selection import BaseCrossValidator
+from sklearn.utils.estimator_checks import _check_feature_names, get_tags
+from sklearn.utils.metaestimators import available_if
 
 
 class KNearestNeighbors(BaseEstimator, ClassifierMixin):
@@ -116,11 +118,12 @@ class KNearestNeighbors(BaseEstimator, ClassifierMixin):
         """
         # Validate input data and ensure X is 2D and y is 1D
         X, y = validate_data(
-            X, y,
+            self,
+            X,
+            y,
             accept_sparse=False,
             dtype=None,
             ensure_2d=True,
-            y_numeric=False,
             multi_output=False,
             reset=True
         )
@@ -157,6 +160,7 @@ class KNearestNeighbors(BaseEstimator, ClassifierMixin):
 
         # Validate input data and ensure it's 2D
         X = validate_data(
+            self,
             X,
             accept_sparse=False,
             dtype=None,
