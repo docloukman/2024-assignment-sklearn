@@ -53,12 +53,7 @@ import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.metrics.pairwise import pairwise_distances
-from sklearn.utils.validation import (
-    check_X_y, check_array, check_is_fitted, _check_sample_weight,
-    _num_samples
-)
-from sklearn.utils.multiclass import check_classification_targets
-from sklearn.preprocessing import LabelEncoder
+from sklearn.utils.validation import check_X_y, check_array, check_is_fitted
 from sklearn.model_selection import BaseCrossValidator
 
 
@@ -67,40 +62,45 @@ class KNearestNeighbors(BaseEstimator, ClassifierMixin):
         self.n_neighbors = n_neighbors
 
     def fit(self, X, y):
-        X, y = check_X_y(X, y, ensure_min_samples=1)
-        self.classes_ = np.unique(y)
+        # Validation stricte des entrées
+        X, y = check_X_y(X, y, ensure_min_samples=2)
+        self._validate_params()
+        
         self.X_ = X
         self.y_ = y
+        self.classes_ = np.unique(y)
         self.n_features_in_ = X.shape[1]
+        
         return self
+
+    def _validate_params(self):
+        if not isinstance(self.n_neighbors, int) or self.n_neighbors < 1:
+            raise ValueError("n_neighbors must be a positive integer")
 
     def predict(self, X):
         check_is_fitted(self)
-        X = check_array(X)
+        X = check_array(X, ensure_2d=True)
         
         if X.shape[1] != self.n_features_in_:
             raise ValueError(f"X has {X.shape[1]} features, expected {self.n_features_in_}")
         
         distances = pairwise_distances(X, self.X_)
-        nearest_neighbors = np.argsort(distances, axis=1)[:, :self.n_neighbors]
+        neigh_idx = np.argpartition(distances, self.n_neighbors-1, axis=1)[:, :self.n_neighbors]
         
-        predictions = []
-        for neighbors in nearest_neighbors:
-            neighbor_labels = self.y_[neighbors]
-            most_common = np.bincount(neighbor_labels).argmax()
-            predictions.append(most_common)
-        
-        return np.array(predictions)
+        return np.array([
+            np.bincount(self.y_[idx]).argmax()
+            for idx in neigh_idx
+        ])
 
 class MonthlySplit(BaseCrossValidator):
     def __init__(self, time_col='index'):
         self.time_col = time_col
 
     def split(self, X, y=None, groups=None):
-        times = self._get_time_data(X)
-        months = times.dt.to_period('M')
+        time_data = self._get_time_data(X)
+        months = time_data.dt.to_period('M')
         unique_months = sorted(months.unique())
-
+        
         for i in range(len(unique_months) - 1):
             train_mask = months == unique_months[i]
             test_mask = months == unique_months[i + 1]
@@ -109,8 +109,8 @@ class MonthlySplit(BaseCrossValidator):
     def get_n_splits(self, X=None, y=None, groups=None):
         if X is None:
             raise ValueError("X cannot be None")
-        times = self._get_time_data(X)
-        return times.dt.to_period('M').nunique() - 1
+        time_data = self._get_time_data(X)
+        return time_data.dt.to_period('M').nunique() - 1
 
     def _get_time_data(self, X):
         if self.time_col == 'index':
@@ -120,9 +120,9 @@ class MonthlySplit(BaseCrossValidator):
         
         if self.time_col not in X.columns:
             raise ValueError(f"Column {self.time_col} not found")
-            
+        
         time_values = X[self.time_col]
         if not pd.api.types.is_datetime64_any_dtype(time_values):
             raise ValueError(f"Column {self.time_col} must be datetime type")
-            
+        
         return time_values
