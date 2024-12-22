@@ -63,274 +63,66 @@ from sklearn.model_selection import BaseCrossValidator
 
 
 class KNearestNeighbors(BaseEstimator, ClassifierMixin):
-    """K-nearest neighbors classifier implementation.
-
-    Parameters
-    ----------
-    n_neighbors : int, default=1
-        Number of neighbors to use for classification.
-
-    Attributes
-    ----------
-    X_ : ndarray of shape (n_samples, n_features)
-        The input samples.
-    y_ : ndarray of shape (n_samples,)
-        The target values.
-    classes_ : ndarray of shape (n_classes,)
-        The unique classes labels.
-    n_features_in_ : int
-        Number of features seen during fit.
-    _fit_X : ndarray of shape (n_samples, n_features)
-        Validated training data.
-    _y : ndarray of shape (n_samples,)
-        Validated target values.
-    """
-
     def __init__(self, n_neighbors=1):
-        """Initialize the classifier.
-
-        Parameters
-        ----------
-        n_neighbors : int, default=1
-            Number of neighbors to use.
-        """
         self.n_neighbors = n_neighbors
 
     def fit(self, X, y):
-        """Fit the model using X as training data and y as target values.
-
-        Parameters
-        ----------
-        X : {array-like, sparse matrix} of shape (n_samples, n_features)
-            Training data.
-        y : array-like of shape (n_samples,)
-            Target values.
-
-        Returns
-        -------
-        self : KNearestNeighbors
-            The fitted classifier.
-        """
-        # Input validation
-        X, y = check_X_y(
-            X, y,
-            ensure_2d=True,
-            allow_nd=False,
-            dtype=[np.float64, np.float32],
-            force_all_finite=True
-        )
-
-        # Check that X and y have correct shape
-        if X.shape[0] != y.shape[0]:
-            raise ValueError(
-                f"Found input variables with inconsistent numbers of samples: "
-                f"{[X.shape[0], y.shape[0]]}"
-            )
-
-        # Validate n_neighbors
-        if self.n_neighbors < 1:
-            raise ValueError(
-                f"Expected n_neighbors > 0, got {self.n_neighbors}"
-            )
-        n_samples = _num_samples(X)
-        if self.n_neighbors > n_samples:
-            raise ValueError(
-                f"Expected n_neighbors <= n_samples, got n_neighbors = "
-                f"{self.n_neighbors}, n_samples = {n_samples}"
-            )
-
-        check_classification_targets(y)
-
-        self._fit_X = X
+        X, y = check_X_y(X, y, ensure_min_samples=1)
+        self.classes_ = np.unique(y)
         self.X_ = X
+        self.y_ = y
         self.n_features_in_ = X.shape[1]
-
-        # Encode labels
-        self._le = LabelEncoder()
-        self._y = self._le.fit_transform(y)
-        self.classes_ = self._le.classes_
-
         return self
 
     def predict(self, X):
-        """Predict the class labels for the provided data.
-
-        Parameters
-        ----------
-        X : array-like of shape (n_samples, n_features)
-            Test samples.
-
-        Returns
-        -------
-        y_pred : ndarray of shape (n_samples,)
-            Class labels for each data sample.
-
-        Raises
-        ------
-        ValueError
-            If the number of features in X doesn't match the training data.
-        """
-        # Check if fit has been called
-        check_is_fitted(
-            self,
-            ["_fit_X", "_y", "n_features_in_", "classes_"]
-        )
-
-        # Input validation
-        X = check_array(
-            X,
-            accept_sparse=False,
-            dtype=np.float64,
-            order="C",
-            ensure_2d=True,
-            force_all_finite=True
-        )
-
-        # Check feature size consistency
+        check_is_fitted(self)
+        X = check_array(X)
+        
         if X.shape[1] != self.n_features_in_:
-            raise ValueError(
-                f"X has {X.shape[1]} features, but this "
-                f"KNearestNeighbors is expecting {self.n_features_in_} features"
-            )
-
-        # Compute distances and find nearest neighbors
-        distances = pairwise_distances(X, self._fit_X)
-        neigh_ind = np.argpartition(
-            distances,
-            min(self.n_neighbors - 1, len(self._y) - 1),
-            axis=1
-        )[:, :self.n_neighbors]
-
-        # Get labels of nearest neighbors
-        neigh_labels = self._y[neigh_ind]
-
-        # Predict by majority voting
-        y_pred = np.zeros(X.shape[0], dtype=self._y.dtype)
-        for i in range(X.shape[0]):
-            counts = np.bincount(neigh_labels[i])
-            y_pred[i] = counts.argmax()
-
-        return self._le.inverse_transform(y_pred)
-
-    def score(self, X, y):
-        """Return the mean accuracy on the given test data and labels.
-
-        Parameters
-        ----------
-        X : array-like of shape (n_samples, n_features)
-            Test samples.
-        y : array-like of shape (n_samples,)
-            True labels for X.
-
-        Returns
-        -------
-        score : float
-            Mean accuracy of self.predict(X) with respect to y.
-        """
-        # Check that X and y have correct shape
-        X = check_array(X, accept_sparse=False, ensure_2d=True)
-        y = check_array(y, ensure_2d=False, ensure_min_samples=0)
-
-        if X.shape[0] != y.shape[0]:
-            raise ValueError(
-                f"Found input variables with inconsistent numbers of samples: "
-                f"{[X.shape[0], y.shape[0]]}"
-            )
-
-        return np.mean(self.predict(X) == y)
-
+            raise ValueError(f"X has {X.shape[1]} features, expected {self.n_features_in_}")
+        
+        distances = pairwise_distances(X, self.X_)
+        nearest_neighbors = np.argsort(distances, axis=1)[:, :self.n_neighbors]
+        
+        predictions = []
+        for neighbors in nearest_neighbors:
+            neighbor_labels = self.y_[neighbors]
+            most_common = np.bincount(neighbor_labels).argmax()
+            predictions.append(most_common)
+        
+        return np.array(predictions)
 
 class MonthlySplit(BaseCrossValidator):
-    """Monthly cross-validation splitter.
-
-    Parameters
-    ----------
-    time_col : str, default='index'
-        Column name containing datetime values. If 'index', uses the index.
-    """
-
     def __init__(self, time_col='index'):
-        """Initialize the splitter.
-
-        Parameters
-        ----------
-        time_col : str, default='index'
-            Column containing datetime values or 'index'.
-        """
         self.time_col = time_col
 
-    def get_n_splits(self, X=None, y=None, groups=None):
-        """Return the number of splitting iterations.
-
-        Parameters
-        ----------
-        X : pd.DataFrame, required
-            Training data.
-        y : array-like, default=None
-            Always ignored, exists for compatibility.
-        groups : array-like, default=None
-            Always ignored, exists for compatibility.
-
-        Returns
-        -------
-        n_splits : int
-            Returns the number of splitting iterations.
-        """
-        time_data = self._get_time_data(X)
-        n_months = time_data.dt.to_period('M').nunique()
-        return max(0, n_months - 1)
-
     def split(self, X, y=None, groups=None):
-        """Generate indices to split data into training and test set.
-
-        Parameters
-        ----------
-        X : pd.DataFrame
-            Training data.
-        y : array-like, default=None
-            Always ignored, exists for compatibility.
-        groups : array-like, default=None
-            Always ignored, exists for compatibility.
-
-        Yields
-        ------
-        train : ndarray
-            Training set indices.
-        test : ndarray
-            Test set indices.
-        """
-        time_data = self._get_time_data(X)
-        months = time_data.dt.to_period('M')
+        times = self._get_time_data(X)
+        months = times.dt.to_period('M')
         unique_months = sorted(months.unique())
 
         for i in range(len(unique_months) - 1):
-            train_idx = np.where(months == unique_months[i])[0]
-            test_idx = np.where(months == unique_months[i + 1])[0]
-            yield train_idx, test_idx
+            train_mask = months == unique_months[i]
+            test_mask = months == unique_months[i + 1]
+            yield np.where(train_mask)[0], np.where(test_mask)[0]
+
+    def get_n_splits(self, X=None, y=None, groups=None):
+        if X is None:
+            raise ValueError("X cannot be None")
+        times = self._get_time_data(X)
+        return times.dt.to_period('M').nunique() - 1
 
     def _get_time_data(self, X):
-        """Get datetime data from DataFrame.
-
-        Parameters
-        ----------
-        X : pd.DataFrame
-            Input data.
-
-        Returns
-        -------
-        pd.Series
-            Series containing datetime values.
-        """
         if self.time_col == 'index':
             if not isinstance(X.index, pd.DatetimeIndex):
                 raise ValueError("Index must be DatetimeIndex when time_col='index'")
             return pd.Series(X.index)
-
+        
         if self.time_col not in X.columns:
-            raise ValueError(f"Column {self.time_col} not found in X")
-
+            raise ValueError(f"Column {self.time_col} not found")
+            
         time_values = X[self.time_col]
         if not pd.api.types.is_datetime64_any_dtype(time_values):
             raise ValueError(f"Column {self.time_col} must be datetime type")
-
+            
         return time_values
